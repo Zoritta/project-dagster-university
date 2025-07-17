@@ -21,7 +21,7 @@ def taxi_trips_file() -> None:
 
 
 @dg.asset
-def taxi_zones() -> None:
+def taxi_zones_file() -> None:
     """
       The raw CSV file for the taxi zones dataset. Sourced from the NYC Open Data portal.
     """
@@ -54,6 +54,35 @@ def taxi_trips() -> None:
             passenger_count as passenger_count,
             total_amount as total_amount
           from 'data/raw/taxi_trips_2023-03.parquet'
+        );
+    """
+
+    conn = backoff(
+        fn=duckdb.connect,
+        retry_on=(RuntimeError, duckdb.IOException),
+        kwargs={
+            "database": os.getenv("DUCKDB_DATABASE"),
+        },
+        max_retries=10,
+    )
+    conn.execute(query)
+
+@dg.asset(
+    deps=["taxi_zones_file"]
+)
+def taxi_zones() -> None:
+    """
+      The raw taxi zones dataset, loaded into a DuckDB database
+    """
+    query = """
+        create or replace table zones as (
+          select
+            Zone as zone,
+            Borough as borough,
+            LocationID as location_id,
+            Lat as lat,
+            Lon as lon
+          from 'data/raw/taxi_zones.csv'
         );
     """
 
