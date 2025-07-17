@@ -21,7 +21,7 @@ def taxi_trips_file() -> None:
 
 
 @dg.asset
-def taxi_zones_file() -> None:
+def taxi_zones() -> None:
     """
       The raw CSV file for the taxi zones dataset. Sourced from the NYC Open Data portal.
     """
