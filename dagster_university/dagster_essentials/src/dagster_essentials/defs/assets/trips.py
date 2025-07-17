@@ -71,18 +71,14 @@ def taxi_trips() -> None:
     deps=["taxi_zones_file"]
 )
 def taxi_zones() -> None:
-    """
-      The raw taxi zones dataset, loaded into a DuckDB database
-    """
-    query = """
+    query = f"""
         create or replace table zones as (
-          select
-            Zone as zone,
-            Borough as borough,
-            LocationID as location_id,
-            Lat as lat,
-            Lon as lon
-          from 'data/raw/taxi_zones.csv'
+            select
+                LocationID as zone_id,
+                zone,
+                borough,
+                the_geom as geometry
+            from '{constants.TAXI_ZONES_FILE_PATH}'
         );
     """
 
