@@ -1,8 +1,8 @@
 import dagster as dg
-
+import csv
 import matplotlib.pyplot as plt
 import geopandas as gpd
-
+from datetime import datetime, timedelta
 import duckdb
 import os
 
@@ -50,3 +50,37 @@ def manhattan_map() -> None:
     # Save the image
     plt.savefig(constants.MANHATTAN_MAP_FILE_PATH, format="png", bbox_inches="tight")
     plt.close(fig)
+
+@dg.asset(
+    deps=["taxi_trips"]
+)
+def trips_by_week() -> None:
+    # Define your date range (adjust as needed)
+    start_date = datetime(2023, 3, 1)
+    end_date = datetime(2023, 3, 31)
+
+    conn = duckdb.connect(os.getenv("DUCKDB_DATABASE"))
+
+    # Open CSV for writing
+    with open(constants.TRIPS_BY_WEEK_FILE_PATH, "w", newline="") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(["period", "num_trips", "passenger_count", "total_amount", "trip_distance"])
+
+        current = start_date
+        while current <= end_date:
+            week_end = current + timedelta(days=6)
+            # DuckDB query for this week
+            query = f"""
+                SELECT
+                    '{week_end.strftime('%Y-%m-%d')}' AS period,
+                    COUNT(*) AS num_trips,
+                    SUM(passenger_count) AS passenger_count,
+                    SUM(total_amount) AS total_amount,
+                    SUM(trip_distance) AS trip_distance
+                FROM trips
+                WHERE pickup_datetime >= '{current.strftime('%Y-%m-%d')}'
+                  AND pickup_datetime < '{(week_end + timedelta(days=1)).strftime('%Y-%m-%d')}'
+            """
+            row = conn.execute(query).fetchone()
+            writer.writerow(row)
+            current = week_end + timedelta(days=1)
