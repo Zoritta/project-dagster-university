@@ -1,10 +1,9 @@
-import dagster as dg
-import csv
-import matplotlib.pyplot as plt
-import geopandas as gpd
 from datetime import datetime, timedelta
-import duckdb
-import os
+from dagster_essentials.defs.assets import constants
+
+import pandas as pd
+import dagster as dg
+from dagster._utils.backoff import backoff
 
 from dagster_essentials.defs.assets import constants
 
@@ -55,32 +54,50 @@ def manhattan_map() -> None:
     deps=["taxi_trips"]
 )
 def trips_by_week() -> None:
-    # Define your date range (adjust as needed)
-    start_date = datetime(2023, 3, 1)
-    end_date = datetime(2023, 3, 31)
+    conn = backoff(
+        fn=duckdb.connect,
+        retry_on=(RuntimeError, duckdb.IOException),
+        kwargs={
+            "database": os.getenv("DUCKDB_DATABASE"),
+        },
+        max_retries=10,
+    )
 
-    conn = duckdb.connect(os.getenv("DUCKDB_DATABASE"))
+    current_date = datetime.strptime("2023-03-01", constants.DATE_FORMAT)
+    end_date = datetime.strptime("2023-04-01", constants.DATE_FORMAT)
 
-    # Open CSV for writing
-    with open(constants.TRIPS_BY_WEEK_FILE_PATH, "w", newline="") as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow(["period", "num_trips", "passenger_count", "total_amount", "trip_distance"])
+    result = pd.DataFrame()
 
-        current = start_date
-        while current <= end_date:
-            week_end = current + timedelta(days=6)
-            # DuckDB query for this week
-            query = f"""
-                SELECT
-                    '{week_end.strftime('%Y-%m-%d')}' AS period,
-                    COUNT(*) AS num_trips,
-                    SUM(passenger_count) AS passenger_count,
-                    SUM(total_amount) AS total_amount,
-                    SUM(trip_distance) AS trip_distance
-                FROM trips
-                WHERE pickup_datetime >= '{current.strftime('%Y-%m-%d')}'
-                  AND pickup_datetime < '{(week_end + timedelta(days=1)).strftime('%Y-%m-%d')}'
-            """
-            row = conn.execute(query).fetchone()
-            writer.writerow(row)
-            current = week_end + timedelta(days=1)
+    while current_date < end_date:
+        current_date_str = current_date.strftime(constants.DATE_FORMAT)
+        query = f"""
+            select
+                vendor_id, total_amount, trip_distance, passenger_count
+            from trips
+            where date_trunc('week', pickup_datetime) = date_trunc('week', '{current_date_str}'::date)
+        """
+
+        data_for_week = conn.execute(query).fetch_df()
+
+        aggregate = data_for_week.agg({
+            "vendor_id": "count",
+            "total_amount": "sum",
+            "trip_distance": "sum",
+            "passenger_count": "sum"
+        }).rename({"vendor_id": "num_trips"}).to_frame().T # type: ignore
+
+        aggregate["period"] = current_date
+
+        result = pd.concat([result, aggregate])
+
+        current_date += timedelta(days=7)
+
+    # clean up the formatting of the dataframe
+    result['num_trips'] = result['num_trips'].astype(int)
+    result['passenger_count'] = result['passenger_count'].astype(int)
+    result['total_amount'] = result['total_amount'].round(2).astype(float)
+    result['trip_distance'] = result['trip_distance'].round(2).astype(float)
+    result = result[["period", "num_trips", "total_amount", "trip_distance", "passenger_count"]]
+    result = result.sort_values(by="period")
+
+    result.to_csv(constants.TRIPS_BY_WEEK_FILE_PATH, index=False)
